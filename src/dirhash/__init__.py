@@ -6,7 +6,7 @@ import os
 from functools import partial
 from multiprocessing import Pool
 
-from scantree import CyclicLinkedDir, RecursionFilter, scantree
+from scantree import CyclicLinkedDir, RecursionFilter, RecursionPath, scantree
 
 from . import _version
 
@@ -230,21 +230,33 @@ def dirhash_impl(
         cache = {}
 
         def file_apply(path):
-            return path, _get_filehash(
-                path.real, hasher_factory, chunk_size=chunk_size, cache=cache
-            )
+            try:
+                return path, _get_filehash(
+                    path.real, hasher_factory, chunk_size=chunk_size, cache=cache
+                )
+            except OSError as e:
+                if e.errno == 62:  # Too many levels of symbolic links
+                    return path, _get_symlink_fallback_hash(path, hasher_factory)
+                raise
 
-        _, dirhash_ = scantree(
-            directory,
-            recursion_filter=filter_,
-            file_apply=file_apply,
-            dir_apply=dir_apply,
-            follow_links=True,
-            allow_cyclic_links=protocol.allow_cyclic_links,
-            cache_file_apply=False,
-            include_empty=filter_.empty_dirs,
-            jobs=1,
-        )
+        try:
+            _, dirhash_ = scantree(
+                directory,
+                recursion_filter=filter_,
+                file_apply=file_apply,
+                dir_apply=dir_apply,
+                follow_links=True,
+                allow_cyclic_links=protocol.allow_cyclic_links,
+                cache_file_apply=False,
+                include_empty=filter_.empty_dirs,
+                jobs=1,
+            )
+        except OSError as e:
+            if e.errno == 62:  # Too many levels of symbolic links
+                # Fall back to using the relative path as content for cyclic symlinks
+                path = RecursionPath.from_root(directory)
+                return _get_symlink_fallback_hash(path, hasher_factory)
+            raise
     else:  # multiprocessing
         real_paths = set()
 
@@ -281,6 +293,14 @@ def dirhash_impl(
 
     return dirhash_
 
+
+def _get_symlink_fallback_hash(path, hasher_factory):
+    """Fallback for handling too many levels of symlinks by hashing the path.
+
+    When we encounter "Too many levels of symbolic links" errors (errno 62),
+    we use this fallback to hash the relative path instead of the actual content.
+    """
+    return hasher_factory(path.relative.encode('utf-8')).hexdigest()
 
 def included_paths(
     directory,
