@@ -300,7 +300,8 @@ def _get_symlink_fallback_hash(path, hasher_factory):
     When we encounter "Too many levels of symbolic links" errors (errno 62),
     we use this fallback to hash the relative path instead of the actual content.
     """
-    return hasher_factory(path.relative.encode('utf-8')).hexdigest()
+    return hasher_factory(path.relative.encode("utf-8")).hexdigest()
+
 
 def included_paths(
     directory,
